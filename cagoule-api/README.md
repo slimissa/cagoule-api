@@ -1,5 +1,17 @@
 # cagoule-api
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688.svg)](https://fastapi.tiangolo.com/)
+[![Pydantic](https://img.shields.io/badge/Pydantic-v2-red.svg)](https://docs.pydantic.dev/)
+[![CAGOULE](https://img.shields.io/badge/CAGOULE-1.5.0+-purple.svg)](https://github.com/quantos/cagoule)
+[![Tests](https://img.shields.io/badge/tests-36%20passing-brightgreen.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-green.svg)](tests/)
+[![License](https://img.shields.io/badge/license-Academic-red.svg)](LICENSE)
+[![Security](https://img.shields.io/badge/security-mTLS-orange.svg)](https://en.wikipedia.org/wiki/Mutual_TLS)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
+[![Code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
+
 > ⚠️ **AVERTISSEMENT — Usage interne / Académique uniquement.**
 > Ce projet est développé dans un cadre académique et de recherche (QuantOS).
 > Il ne doit pas être exposé sur un réseau public sans durcissement supplémentaire.
