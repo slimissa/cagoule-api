@@ -7,7 +7,8 @@ Prérequis : CAGOULE installé (pip install cagoule>=1.5.0)
 
 import base64
 import pytest
-from unittest.mock import patch, MagicMock
+import time
+from unittest.mock import patch
 
 from cagoule_api import crypto
 from cagoule_api.errors import DecryptionFailedError, ServiceNotReadyError
@@ -62,6 +63,24 @@ class TestEncryptDecryptText:
         pt = crypto.decrypt_text(ct, SAMPLE_PASSWORD)
         assert pt == text
 
+    def test_empty_plaintext_raises(self):
+        """Le chiffrement de texte vide doit être refusé"""
+        with pytest.raises(ValueError, match="plaintext ne peut pas être vide"):
+            crypto.encrypt_text("", SAMPLE_PASSWORD)
+
+    def test_empty_password_raises(self):
+        """Le mot de passe vide doit être refusé"""
+        with pytest.raises((ValueError, DecryptionFailedError)):
+            crypto.encrypt_text(SAMPLE_TEXT, "")
+
+    def test_performance(self):
+        """Le chiffrement doit être rapide (< 0.5s pour 1KB)"""
+        text = "A" * 1024
+        start = time.perf_counter()
+        ct = crypto.encrypt_text(text, SAMPLE_PASSWORD)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"Trop lent: {elapsed:.3f}s"
+
 
 # ──────────────────────────────────────────────
 # Tests erreurs déchiffrement
@@ -86,6 +105,12 @@ class TestDecryptionErrors:
         empty_b64 = base64.b64encode(b"").decode()
         with pytest.raises((DecryptionFailedError, Exception)):
             crypto.decrypt_text(empty_b64, SAMPLE_PASSWORD)
+
+    def test_ciphertext_without_signature_raises(self):
+        """Ciphertext qui ne commence pas par CGL doit lever une erreur"""
+        fake_cipher = base64.b64encode(b"fake_data").decode()
+        with pytest.raises((DecryptionFailedError, Exception)):
+            crypto.decrypt_text(fake_cipher, SAMPLE_PASSWORD)
 
 
 # ──────────────────────────────────────────────
@@ -113,6 +138,12 @@ class TestEncryptDecryptBytes:
         pt = crypto.decrypt_bytes(ct, SAMPLE_PASSWORD)
         assert pt == data
 
+    def test_empty_bytes(self):
+        """Le chiffrement de bytes vides doit fonctionner"""
+        ct = crypto.encrypt_bytes(b"", SAMPLE_PASSWORD)
+        pt = crypto.decrypt_bytes(ct, SAMPLE_PASSWORD)
+        assert pt == b""
+
 
 # ──────────────────────────────────────────────
 # Tests ServiceNotReady (mock)
@@ -129,3 +160,13 @@ class TestServiceNotReady:
         with patch.object(crypto, "_CAGOULE_AVAILABLE", False):
             with pytest.raises(ServiceNotReadyError):
                 crypto.decrypt_text(base64.b64encode(b"fake").decode(), "pwd")
+
+    def test_encrypt_bytes_raises_when_unavailable(self):
+        with patch.object(crypto, "_CAGOULE_AVAILABLE", False):
+            with pytest.raises(ServiceNotReadyError):
+                crypto.encrypt_bytes(b"test", "pwd")
+
+    def test_decrypt_bytes_raises_when_unavailable(self):
+        with patch.object(crypto, "_CAGOULE_AVAILABLE", False):
+            with pytest.raises(ServiceNotReadyError):
+                crypto.decrypt_bytes(base64.b64encode(b"fake").decode(), "pwd")

@@ -8,7 +8,9 @@ Couche 2 — mTLS          : géré par Uvicorn (ssl_certfile / ssl_keyfile / ss
 """
 
 import os
+import secrets
 import logging
+from typing import Optional
 from fastapi import Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -19,29 +21,38 @@ logger = logging.getLogger("cagoule_api.auth")
 _security = HTTPBearer(auto_error=False)
 
 
-def _get_api_key() -> str:
-    """Charge l'API key depuis l'environnement. Lève ValueError si absente."""
+def _get_api_key() -> Optional[str]:
+    """Charge l'API key depuis l'environnement. Retourne None si absente."""
     key = os.environ.get("CAGOULE_API_KEY", "").strip()
-    if not key:
-        raise ValueError(
-            "CAGOULE_API_KEY non définie. "
-            "Définir la variable d'environnement avant de démarrer le serveur."
-        )
-    return key
+    return key if key else None
 
 
-# Chargement à l'import — échoue vite si la config est incorrecte
-try:
-    _API_KEY: str = _get_api_key()
+# Chargement à l'import
+_API_KEY: Optional[str] = _get_api_key()
+
+if _API_KEY:
     logger.info("API key chargée depuis CAGOULE_API_KEY (longueur: %d)", len(_API_KEY))
-except ValueError as _e:
-    _API_KEY = ""
-    logger.warning("CAGOULE_API_KEY non définie — auth désactivée en mode dev uniquement")
+    if len(_API_KEY) < 32:
+        logger.warning("⚠️ API key courte (%d caractères) — utiliser au moins 32 caractères", len(_API_KEY))
+else:
+    warning_msg = """
+    ╔══════════════════════════════════════════════════════════════════════════╗
+    ║  ⚠️  ATTENTION: AUTHENTIFICATION DÉSACTIVÉE  ⚠️                          ║
+    ║                                                                          ║
+    ║  CAGOULE_API_KEY non définie dans l'environnement.                       ║
+    ║  Tout client pourra accéder aux endpoints protégés sans authentification.║
+    ║                                                                          ║
+    ║  À DÉFINIR IMPÉRATIVEMENT EN PRODUCTION :                                ║
+    ║    export CAGOULE_API_KEY="$(openssl rand -hex 32)"                      ║
+    ╚══════════════════════════════════════════════════════════════════════════╝
+    """
+    print(warning_msg)
+    logger.warning("AUTHENTIFICATION DÉSACTIVÉE — CAGOULE_API_KEY non définie")
 
 
 async def require_auth(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> None:
     """
     Dépendance FastAPI — injecter dans tous les endpoints protégés.
@@ -54,23 +65,35 @@ async def require_auth(
     """
     # Mode dev sans clé configurée : on avertit mais on laisse passer
     if not _API_KEY:
-        logger.warning(
-            "AUTH DÉSACTIVÉE — CAGOULE_API_KEY non configurée. "
-            "Ne jamais utiliser en production."
-        )
         return
 
-    # Récupérer le token depuis Authorization: Bearer ou X-API-Key
-    token: str | None = None
+    # Récupérer le token
+    token: Optional[str] = None
 
     if credentials and credentials.credentials:
         token = credentials.credentials
     else:
         token = request.headers.get("X-API-Key", "").strip() or None
 
-    if not token or token != _API_KEY:
+    # Validation en temps constant
+    if not token or not secrets.compare_digest(token, _API_KEY):
+        client_info = f"{request.client.host}:{request.client.port}" if request.client else "inconnu"
         logger.warning(
-            "Tentative d'accès non autorisée depuis %s",
-            request.client.host if request.client else "inconnu",
+            "Authentification échouée depuis %s - méthode: %s",
+            client_info,
+            "Bearer" if credentials else "X-API-Key",
         )
         raise AuthFailedError()
+
+
+def generate_api_key(length: int = 32) -> str:
+    """
+    Génère une API key sécurisée.
+    
+    Args:
+        length: Longueur en bytes (par défaut 32 = 64 caractères hex)
+    
+    Returns:
+        Clé hexadécimale aléatoire.
+    """
+    return secrets.token_hex(length)

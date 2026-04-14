@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 cagoule-api — Serveur FastAPI principal.
 
@@ -8,6 +9,8 @@ cagoule-api — Serveur FastAPI principal.
 
 import logging
 import os
+import json
+import base64
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -78,16 +81,20 @@ _BANNER = f"""
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Gère le cycle de vie de l'application."""
     # Startup
     print(_BANNER)
     logger.warning("=== DÉMARRAGE cagoule-api — USAGE ACADÉMIQUE UNIQUEMENT ===")
-    logger.info("Version      : %s", __version__)
+    logger.info("Version       : %s", __version__)
+    logger.info("Hôte          : %s", os.environ.get("CAGOULE_HOST", "127.0.0.1"))
+    logger.info("Port          : %s", os.environ.get("CAGOULE_PORT", "8000"))
     logger.info("Limite fichier: %d MB", _FILE_LIMIT_MB)
+    logger.info("mTLS          : %s", "activé" if os.environ.get("CAGOULE_MTLS") else "désactivé")
 
     if not crypto.is_cagoule_available():
         logger.critical("CAGOULE non disponible — les endpoints crypto seront en erreur 503")
     else:
-        logger.info("CAGOULE      : disponible ✓")
+        logger.info("CAGOULE       : disponible ✓")
 
     yield
 
@@ -148,7 +155,7 @@ async def health() -> HealthResponse:
     tags=["Crypto — Texte"],
     dependencies=[Depends(require_auth)],
 )
-async def encrypt_text(body: EncryptRequest) -> EncryptResponse:
+async def encrypt_text_endpoint(body: EncryptRequest) -> EncryptResponse:
     """
     Chiffre un texte UTF-8 avec CAGOULE (ChaCha20-Poly1305 + Argon2id).
 
@@ -165,7 +172,7 @@ async def encrypt_text(body: EncryptRequest) -> EncryptResponse:
     tags=["Crypto — Texte"],
     dependencies=[Depends(require_auth)],
 )
-async def decrypt_text(body: DecryptRequest) -> DecryptResponse:
+async def decrypt_text_endpoint(body: DecryptRequest) -> DecryptResponse:
     """
     Déchiffre un ciphertext Base64 produit par /v1/encrypt.
 
@@ -182,7 +189,7 @@ async def decrypt_text(body: DecryptRequest) -> DecryptResponse:
     tags=["Crypto — Fichiers"],
     dependencies=[Depends(require_auth)],
 )
-async def encrypt_file(
+async def encrypt_file_endpoint(
     file: UploadFile = File(..., description="Fichier à chiffrer"),
     password: str = Form(..., description="Mot de passe Argon2id"),
 ) -> EncryptResponse:
@@ -209,40 +216,70 @@ async def encrypt_file(
     tags=["Crypto — Fichiers"],
     dependencies=[Depends(require_auth)],
 )
-async def decrypt_file(
-    file: UploadFile = File(..., description="Fichier chiffré (ciphertext brut)"),
+async def decrypt_file_endpoint(
+    file: UploadFile = File(..., description="Fichier chiffré au format JSON (ciphertext_b64)"),
     password: str = Form(..., description="Mot de passe Argon2id"),
 ) -> Response:
     """
-    Déchiffre un fichier chiffré par CAGOULE.
+    Déchiffre un fichier chiffré par /v1/encrypt/file.
 
+    Le fichier doit être au format JSON: {"ciphertext_b64": "..."}
     Retourne le fichier déchiffré en octet-stream.
-    - 422 si le tag AEAD est invalide.
+    - 422 si le tag AEAD est invalide ou le mot de passe incorrect.
     """
-    data = await file.read()
-    if len(data) > _FILE_LIMIT_BYTES:
+    # Lire le contenu du fichier
+    content = await file.read()
+    
+    if len(content) > _FILE_LIMIT_BYTES:
         raise FileTooLargeError(
-            f"Fichier trop volumineux : {len(data)} octets > limite {_FILE_LIMIT_BYTES} octets"
+            f"Fichier trop volumineux : {len(content)} octets > limite {_FILE_LIMIT_BYTES} octets"
         )
-
-    # Le fichier uploadé peut être soit du Base64, soit des bytes bruts
-    # On tente Base64 d'abord (pour cohérence avec /v1/encrypt/file)
-    import base64 as _b64
+    
+    # Extraire le ciphertext du JSON
     try:
-        ciphertext_b64 = data.decode("ascii").strip()
-        _b64.b64decode(ciphertext_b64, validate=True)
-    except Exception:
-        # Ce n'est pas du Base64 — on traite comme bytes bruts
-        import base64 as _b64_inner
-        ciphertext_b64 = _b64_inner.b64encode(data).decode("ascii")
-
-    plaintext_bytes = crypto.decrypt_bytes(ciphertext_b64, password)
-
+        # Essayer de décoder le contenu comme JSON
+        content_str = content.decode('utf-8')
+        data = json.loads(content_str)
+        ciphertext_b64 = data.get("ciphertext_b64")
+        
+        if not ciphertext_b64:
+            raise DecryptionFailedError("JSON invalide: champ 'ciphertext_b64' manquant")
+        
+        # Vérifier que c'est du base64 valide
+        base64.b64decode(ciphertext_b64, validate=True)
+        
+    except UnicodeDecodeError as e:
+        raise DecryptionFailedError(f"Le fichier n'est pas un JSON valide (erreur UTF-8): {e}")
+    except json.JSONDecodeError as e:
+        raise DecryptionFailedError(f"Le fichier n'est pas un JSON valide: {e}")
+    except Exception as e:
+        raise DecryptionFailedError(f"Erreur lors de la lecture du fichier: {e}")
+    
+    logger.debug("decrypt_file: ciphertext_b64 trouvé, longueur: %d", len(ciphertext_b64))
+    
+    # Déchiffrer
+    try:
+        plaintext_bytes = crypto.decrypt_bytes(ciphertext_b64, password)
+    except DecryptionFailedError:
+        raise
+    except Exception as e:
+        logger.error("Erreur inattendue lors du déchiffrement: %s", e)
+        raise DecryptionFailedError(f"Erreur lors du déchiffrement: {e}")
+    
+    # Déterminer le nom du fichier de sortie
     original_filename = file.filename or "decrypted_file"
+    # Enlever l'extension .json si présente
+    if original_filename.lower().endswith('.json'):
+        original_filename = original_filename[:-5]
+    if original_filename.endswith('.enc'):
+        original_filename = original_filename[:-4]
+    
+    output_filename = f"{original_filename}.dec"
+    
     return Response(
         content=plaintext_bytes,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{original_filename}.dec"'},
+        headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
     )
 
 
@@ -251,6 +288,7 @@ async def decrypt_file(
 # ──────────────────────────────────────────────
 
 def main():
+    """Point d'entrée principal pour la ligne de commande."""
     host = os.environ.get("CAGOULE_HOST", "127.0.0.1")
     port = int(os.environ.get("CAGOULE_PORT", "8000"))
     use_mtls = os.environ.get("CAGOULE_MTLS", "").lower() in ("1", "true", "yes")
@@ -258,16 +296,17 @@ def main():
     ssl_kwargs = {}
     if use_mtls:
         ssl_kwargs = {
-            "ssl_keyfile":  os.environ.get("CAGOULE_SSL_KEY",    "certs/server.key"),
-            "ssl_certfile": os.environ.get("CAGOULE_SSL_CERT",   "certs/server.crt"),
-            "ssl_ca_certs": os.environ.get("CAGOULE_SSL_CA",     "certs/ca.crt"),
+            "ssl_keyfile": os.environ.get("CAGOULE_SSL_KEY", "certs/server.key"),
+            "ssl_certfile": os.environ.get("CAGOULE_SSL_CERT", "certs/server.crt"),
+            "ssl_ca_certs": os.environ.get("CAGOULE_SSL_CA", "certs/ca.crt"),
         }
-        logger.info("mTLS activé")
+        logger.info("mTLS activé avec certificats depuis certs/")
 
     uvicorn.run(
-        "cagoule_api.server:app",
+        "server:app",
         host=host,
         port=port,
+        reload=True,
         log_level="info",
         **ssl_kwargs,
     )

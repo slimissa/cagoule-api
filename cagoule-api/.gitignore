@@ -1,33 +1,135 @@
-# ⚠️  Ne jamais commit : clés, certificats, .env
+# ────────────────────────────────────────────────────────────────
+# cagoule-api — .gitignore
+# ────────────────────────────────────────────────────────────────
+
+# ================================================================
+# SÉCURITÉ (ne jamais committer)
+# ================================================================
+
+# Variables d'environnement
 .env
+.env.local
+.env.*.local
+
+# Certificats mTLS
 certs/*.key
 certs/*.crt
 certs/*.csr
+certs/*.pem
 certs/*.srl
+!certs/.gitkeep
 
-# Python
+# Clés et secrets
+*.key
+*.pem
+*.pkcs12
+*.pfx
+
+# ================================================================
+# PYTHON
+# ================================================================
+
+# Bytecode
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
 *.pyd
+
+# Distribution
 .Python
 *.egg-info/
+*.egg
 dist/
 build/
-.eggs/
-*.egg
+develop-eggs/
+downloads/
+eggs/
+parts/
+sdist/
+var/
+wheels/
+*.whl
 
-# Tests
+# Virtual environments
+venv/
+.env/
+.venv/
+ENV/
+env/
+
+# ================================================================
+# TESTS
+# ================================================================
+
 .pytest_cache/
-.coverage
-htmlcov/
 .tox/
+.coverage
+.coverage.*
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 
-# IDE
+# ================================================================
+# IDEs & ÉDITEURS
+# ================================================================
+
+# VS Code
 .vscode/
+.history/
+
+# PyCharm
 .idea/
+*.iml
+
+# Vim
 *.swp
 *.swo
+*~
+*.orig
 
-# Docker
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ================================================================
+# DOCKER
+# ================================================================
+
 *.log
+docker-compose.override.yml
+
+# ================================================================
+# OS & SYSTÈME
+# ================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ================================================================
+# PROJET (fichiers générés localement)
+# ================================================================
+
+# Fichiers de test générés
+test_encrypted.json
+test_decrypted.png
+*.cipher.json
+*.dec
+
+# Rapports
+*.html
+*.pdf

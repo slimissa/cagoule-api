@@ -1,5 +1,4 @@
-version: "3.9"
-
+# Docker Compose pour cagoule-api
 # ⚠️  USAGE ACADÉMIQUE UNIQUEMENT — Démo d'interopérabilité multi-langages
 
 services:
@@ -12,15 +11,25 @@ services:
       - CAGOULE_API_KEY=${CAGOULE_API_KEY:?CAGOULE_API_KEY non définie}
       - CAGOULE_HOST=0.0.0.0
       - CAGOULE_PORT=8000
+      - CAGOULE_MTLS=${CAGOULE_MTLS:-false}
       - FILE_SIZE_LIMIT_MB=10
     volumes:
       - ./certs:/app/certs:ro
+    networks:
+      - cagoule-network
     healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')"]
+      test: ["CMD", "python", "-c", 
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health').read()"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
   # Client Node.js — démo interop
   client-node:
@@ -35,6 +44,8 @@ services:
     volumes:
       - ./scripts/node_client_demo.js:/app/demo.js:ro
     working_dir: /app
+    networks:
+      - cagoule-network
     command: >
       sh -c "
         echo '=== Démo Node.js — interop cagoule-api ===' &&
@@ -42,3 +53,28 @@ services:
       "
     profiles:
       - demo
+    restart: "no"
+
+  # Client Go — démo interop (optionnel)
+  client-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-demo
+    container_name: cagoule-client-go
+    depends_on:
+      cagoule-api:
+        condition: service_healthy
+    environment:
+      - CAGOULE_API_URL=http://cagoule-api:8000
+      - CAGOULE_API_KEY=${CAGOULE_API_KEY}
+    networks:
+      - cagoule-network
+    profiles:
+      - demo
+      - go-demo
+    restart: "no"
+
+networks:
+  cagoule-network:
+    name: cagoule-network
+    driver: bridge

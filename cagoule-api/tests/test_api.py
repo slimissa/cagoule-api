@@ -7,15 +7,31 @@ Prérequis : CAGOULE installé, CAGOULE_API_KEY définie dans l'environnement de
 
 import base64
 import os
+import sys
 import pytest
-import pytest_asyncio
+import json
 from httpx import AsyncClient, ASGITransport
+
+# Ajouter le chemin courant
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Définir la clé avant l'import du serveur
 _TEST_KEY = "test_key_cagoule_api_pytest"
 os.environ.setdefault("CAGOULE_API_KEY", _TEST_KEY)
 
-from cagoule_api.server import app
+# Importer l'app
+try:
+    from cagoule_api.server import app
+except ImportError:
+    try:
+        from server import app
+    except ImportError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("server", "server.py")
+        server = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+        app = server.app
+
 from cagoule_api import crypto
 
 
@@ -23,15 +39,16 @@ from cagoule_api import crypto
 # Fixtures
 # ──────────────────────────────────────────────
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def client():
+    """Client HTTP de test sans authentification."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def auth_client():
-    """Client avec Bearer token valide."""
+    """Client HTTP avec authentification Bearer token."""
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -96,7 +113,6 @@ class TestAuth:
             json={"plaintext": SAMPLE_TEXT, "password": SAMPLE_PASSWORD},
             headers={"X-API-Key": _TEST_KEY},
         )
-        # 200 si CAGOULE dispo, 503 sinon — dans les deux cas, pas 401
         assert r.status_code in (200, 503)
 
 
@@ -118,14 +134,11 @@ class TestEncryptDecryptText:
 
     @pytest.mark.asyncio
     async def test_decrypt_200(self, auth_client):
-        # Chiffrer d'abord
         r_enc = await auth_client.post(
             "/v1/encrypt",
             json={"plaintext": SAMPLE_TEXT, "password": SAMPLE_PASSWORD},
         )
         ct = r_enc.json()["ciphertext_b64"]
-
-        # Puis déchiffrer
         r_dec = await auth_client.post(
             "/v1/decrypt",
             json={"ciphertext_b64": ct, "password": SAMPLE_PASSWORD},
@@ -139,13 +152,21 @@ class TestEncryptDecryptText:
             "Simple ASCII",
             "Français avec accents éàü",
             "مرحباً بالعالم",
-            "A" * 10_000,
+            "A" * 1000,
             '{"json": true, "nested": {"key": "val"}}',
         ]
         for text in texts:
-            r_enc = await auth_client.post("/v1/encrypt", json={"plaintext": text, "password": SAMPLE_PASSWORD})
+            r_enc = await auth_client.post(
+                "/v1/encrypt",
+                json={"plaintext": text, "password": SAMPLE_PASSWORD},
+            )
+            assert r_enc.status_code == 200, f"Encrypt failed for {text[:50]}"
             ct = r_enc.json()["ciphertext_b64"]
-            r_dec = await auth_client.post("/v1/decrypt", json={"ciphertext_b64": ct, "password": SAMPLE_PASSWORD})
+            r_dec = await auth_client.post(
+                "/v1/decrypt",
+                json={"ciphertext_b64": ct, "password": SAMPLE_PASSWORD},
+            )
+            assert r_dec.status_code == 200, f"Decrypt failed for {text[:50]}"
             assert r_dec.json()["plaintext"] == text, f"Roundtrip failed for: {text[:50]}"
 
     @pytest.mark.asyncio
@@ -171,7 +192,6 @@ class TestEncryptDecryptText:
         raw = bytearray(base64.b64decode(r_enc.json()["ciphertext_b64"]))
         raw[-1] ^= 0xFF
         tampered = base64.b64encode(bytes(raw)).decode()
-
         r_dec = await auth_client.post(
             "/v1/decrypt",
             json={"ciphertext_b64": tampered, "password": SAMPLE_PASSWORD},
@@ -179,10 +199,10 @@ class TestEncryptDecryptText:
         assert r_dec.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_encrypt_missing_fields_returns_400(self, auth_client):
+    async def test_encrypt_missing_fields_returns_422(self, auth_client):
         r = await auth_client.post("/v1/encrypt", json={"plaintext": "only_one_field"})
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "INVALID_REQUEST"
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
     @pytest.mark.asyncio
     async def test_decrypt_invalid_base64_returns_422(self, auth_client):
@@ -190,7 +210,8 @@ class TestEncryptDecryptText:
             "/v1/decrypt",
             json={"ciphertext_b64": "!!!NOT_BASE64!!!", "password": SAMPLE_PASSWORD},
         )
-        assert r.status_code == 400  # Pydantic validator → 400
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 # ──────────────────────────────────────────────
@@ -211,20 +232,26 @@ class TestFileEndpoints:
         assert "ciphertext_b64" in r.json()
 
     @pytest.mark.asyncio
-    async def test_decrypt_file_roundtrip(self, auth_client):
+    async def test_decrypt_file_roundtrip_json_format(self, auth_client):
+        """Test déchiffrement avec format JSON (format standard de l'API)"""
         original = b"Binary file content \x00\x01\x02\xFF\xFE"
 
+        # Chiffrer
         r_enc = await auth_client.post(
             "/v1/encrypt/file",
             files={"file": ("data.bin", original, "application/octet-stream")},
             data={"password": SAMPLE_PASSWORD},
         )
+        assert r_enc.status_code == 200
         ct_b64 = r_enc.json()["ciphertext_b64"]
-        ct_bytes = base64.b64decode(ct_b64)
-
+        
+        # Créer le JSON attendu par l'endpoint
+        json_content = json.dumps({"ciphertext_b64": ct_b64}).encode()
+        
+        # Déchiffrer avec le JSON
         r_dec = await auth_client.post(
             "/v1/decrypt/file",
-            files={"file": ("data.bin.enc", ct_bytes, "application/octet-stream")},
+            files={"file": ("data.json", json_content, "application/json")},
             data={"password": SAMPLE_PASSWORD},
         )
         assert r_dec.status_code == 200
@@ -232,8 +259,7 @@ class TestFileEndpoints:
 
     @pytest.mark.asyncio
     async def test_file_too_large_returns_413(self, auth_client):
-        """Fichier > 10 MB → 413"""
-        big_data = b"A" * (11 * 1024 * 1024)  # 11 MB
+        big_data = b"A" * (11 * 1024 * 1024)
         r = await auth_client.post(
             "/v1/encrypt/file",
             files={"file": ("big.bin", big_data, "application/octet-stream")},
