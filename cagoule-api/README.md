@@ -21,7 +21,7 @@ API REST locale exposant les primitives cryptographiques de **CAGOULE**
 (ChaCha20-Poly1305 + Argon2id) via FastAPI — pour tests d'interopérabilité multi-langages (Go, Rust, Node.js, C, etc.).
 
 **Auteur :** Slim Issa — QuantOS Project — 2026
-**Version :** `0.1.0-dev`
+**Version :** `1.0.0-dev`
 **Stack :** Python 3.11+ | FastAPI | Pydantic v2 | Uvicorn
 **Auth :** Bearer token + mTLS optionnel
 
