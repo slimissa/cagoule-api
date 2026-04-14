@@ -1,0 +1,44 @@
+version: "3.9"
+
+# ⚠️  USAGE ACADÉMIQUE UNIQUEMENT — Démo d'interopérabilité multi-langages
+
+services:
+  cagoule-api:
+    build: .
+    container_name: cagoule-api
+    ports:
+      - "8000:8000"
+    environment:
+      - CAGOULE_API_KEY=${CAGOULE_API_KEY:?CAGOULE_API_KEY non définie}
+      - CAGOULE_HOST=0.0.0.0
+      - CAGOULE_PORT=8000
+      - FILE_SIZE_LIMIT_MB=10
+    volumes:
+      - ./certs:/app/certs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Client Node.js — démo interop
+  client-node:
+    image: node:20-slim
+    container_name: cagoule-client-node
+    depends_on:
+      cagoule-api:
+        condition: service_healthy
+    environment:
+      - CAGOULE_API_URL=http://cagoule-api:8000
+      - CAGOULE_API_KEY=${CAGOULE_API_KEY}
+    volumes:
+      - ./scripts/node_client_demo.js:/app/demo.js:ro
+    working_dir: /app
+    command: >
+      sh -c "
+        echo '=== Démo Node.js — interop cagoule-api ===' &&
+        node demo.js
+      "
+    profiles:
+      - demo

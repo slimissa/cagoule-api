@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "cagoule-api"
+version = "0.1.0-dev"
+description = "API REST locale exposant les primitives cryptographiques CAGOULE — Usage interne/académique uniquement"
+authors = [{ name = "Slim Issa", email = "slim@quantos.dev" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary — Internal/Academic Use Only" }
+
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "cagoule>=1.5.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27",
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+cagoule-api = "cagoule_api.server:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
